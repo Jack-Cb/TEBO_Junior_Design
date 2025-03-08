@@ -73,12 +73,12 @@ int ch2_pxl[NUM_SAMPLES];
 IntervalTimer sampling_timer;
 
 
-#define ROT_1A 2
-#define ROT_1B 3
-#define ROT_1C 4
-#define ROT_2A 5
-#define ROT_2B 6
-#define ROT_2C 7
+#define ROT_1A 2  // 
+#define ROT_1B 3  //
+#define ROT_1C 4  //
+#define ROT_2A 5  //
+#define ROT_2B 6  //
+#define ROT_2C 7  //
 #define PAUSE_PIN 9
 #define MATH_PIN 22
 
