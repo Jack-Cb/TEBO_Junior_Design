@@ -73,14 +73,14 @@ int ch2_pxl[NUM_SAMPLES];
 IntervalTimer sampling_timer;
 
 
-#define ROT_1A 2  // 
-#define ROT_1B 3  //
-#define ROT_1C 4  //
-#define ROT_2A 5  //
-#define ROT_2B 6  //
-#define ROT_2C 7  //
-#define PAUSE_PIN 9
-#define MATH_PIN 22
+#define ROT_1A 2  // LEFT Encode Clockwise
+#define ROT_1B 3  // LEFT Encode Counter-Clockwise
+#define ROT_1C 4  // LEFT Encode Button
+#define ROT_2A 5  // RIGHT Encode Clockwise
+#define ROT_2B 6  // RIGHT Encode Counter-Clockwise
+#define ROT_2C 7  // RIGHT Encode Button
+#define PAUSE_PIN 9 // Bottom Button
+#define MATH_PIN 22 // Top Button
 
 Bounce pauseButton = Bounce();
 Bounce mathButton = Bounce();
@@ -176,8 +176,8 @@ void setup(void) {
   Serial.println("SETUP DONE");
 }
 void loop(void) {
-  pauseButton.update();
 
+  pauseButton.update();
   if (pauseButton.fell()) {
     paused = !paused; // Toggle pause state
     sampling_timer.end();
