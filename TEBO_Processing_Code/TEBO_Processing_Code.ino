@@ -1,6 +1,7 @@
 #include <ILI9341_T4.h> 
 #include <tgx.h> 
 #include <Bounce2.h>
+#include <Encoder.h>
 
 #include <ADC.h>
 #include <IntervalTimer.h>
@@ -18,7 +19,6 @@
 #define YELLOW  0xFFE0
 #define CYAN    0x07FF
 
-// let's not burden ourselves with the tgx:: prefix
 using namespace tgx;
 
 #define PIN_SCK     13      // mandatory
@@ -56,8 +56,18 @@ Image<RGB565> im(fb, SLX, SLY);
 
 ADC *adc = new ADC();
 bool paused = false;
+bool enable_math = false;
 
-#define NUM_SAMPLES 320
+bool draw_YCH1 = false;
+bool draw_YCH2 = false;
+bool adjust_trigger = false;
+
+int cursor1_xpos = 160;
+int cursor1_ypos = 120;
+int cursor2_xpos = 160;
+int cursor2_ypos = 120;
+
+#define NUM_SAMPLES 640
 int sample_iterator;
 int channel1_raw[NUM_SAMPLES];
 int channel2_raw[NUM_SAMPLES];
@@ -69,9 +79,10 @@ int ch2_pxl[NUM_SAMPLES];
 #define ADC_RESOLUTION    10      // Resolution in bits
 #define ADC_OVERSAMPLING  16      // 
 #define SAMPLING_INTERVAL 1      // microseconds
+volatile float time_scale = 1.0;
+long preserved_time_encoder = 0;
 
 IntervalTimer sampling_timer;
-
 
 #define ROT_1A 2  // LEFT Encode Clockwise
 #define ROT_1B 3  // LEFT Encode Counter-Clockwise
@@ -87,20 +98,81 @@ Bounce mathButton = Bounce();
 Bounce encoderAButton = Bounce();
 Bounce encoderBButton = Bounce();
 
+#define TRIGGER_MIN 0
+#define TRIGGER_MAX 1023
+#define TRIGGER_STEP 10  // Step size per encoder tick
+#define TRIGGER_TIMEOUT 1000 
+#define TRIGGER_CHANNEL channel1_raw
+
+Encoder encoderA(ROT_1A, ROT_1B);
+Encoder encoderB(ROT_2A, ROT_2B);
+
+#define SCALE_MIN 0.1
+#define SCALE_MAX 5.0
+#define SCALE_STEP 0.1
+volatile float vertical_scale = 1.0;
+long preserved_voltage_encoder = 0;
+
+bool triggered = false;
+volatile int trigger_level = 512;
+volatile bool show_trigger = false;
+unsigned long last_encoder_activity = 0;
+long preserved_trigger_encoder = 0;
+
+void update_trigger() {
+  long new_position = encoderB.read() / 4;  // Adjust sensitivity
+
+  if (new_position != preserved_trigger_encoder) {
+    preserved_trigger_encoder = new_position;
+    trigger_level = constrain(512 + (new_position * TRIGGER_STEP), TRIGGER_MIN, TRIGGER_MAX);
+    show_trigger = true;
+    last_encoder_activity = millis();  // Reset timer
+  }
+
+  // Hide trigger if inactive for more than TRIGGER_TIMEOUT
+  if (millis() - last_encoder_activity > TRIGGER_TIMEOUT) {
+    show_trigger = false;
+  }
+}
+
+void update_voltage_scaling() {
+  long new_position = encoderB.read() / 4;
+
+  if (new_position != preserved_voltage_encoder) {
+    preserved_voltage_encoder = new_position;
+    vertical_scale = constrain(1.0 + (new_position * SCALE_STEP), SCALE_MIN, SCALE_MAX);
+    Serial.printf("Vertical Scale: %.1fx\n", vertical_scale);
+  }
+}
+
+// NOT SURE IF THIS IS CORRECT AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+void update_time_scaling() {
+  long new_position = encoderA.read() / 4;  // Adjust sensitivity
+
+  if (new_position != preserved_time_encoder) {
+    preserved_time_encoder = new_position;
+    time_scale = constrain(time_scale + (new_position * 0.1), 0.2, 10.0); // Adjust the range as needed
+    Serial.printf("Time Scale: %.1f\n", time_scale);
+  }
+}
+
+
 void sample(){
 
   while(adc->adc0->isConverting() || adc->adc1->isConverting());
-  channel1_raw[sample_iterator] = 1023 - (adc->adc0->readSingle());
-  channel2_raw[sample_iterator] = 1023 - (adc->adc1->readSingle());
+
+  int ch1_value = 1023 - adc->adc0->readSingle();
+  int ch2_value = 1023 - adc->adc1->readSingle();
+
+  channel1_raw[sample_iterator] = ch1_value;
+  channel2_raw[sample_iterator] = ch2_value;
 
   ch1_pxl[sample_iterator] = map(channel1_raw[sample_iterator],0,1023,0,239);
   ch2_pxl[sample_iterator] = map(channel2_raw[sample_iterator],0,1023,0,239);
-  //Serial.printf("\nCH1 RAW VALUE: %d, PIXEL: %d",  channel1_raw[sample_iterator], ch1_pxl[sample_iterator]);
-  //Serial.printf("\nCH2 RAW VALUE: %d, PIXEL: %d",  channel2_raw[sample_iterator], ch2_pxl[sample_iterator]);
 
   adc->startSynchronizedSingleRead(CHANNEL_A, CHANNEL_B);
 
-  if(sample_iterator == 319){
+  if(sample_iterator == (NUM_SAMPLES - 1)){
     sampling_timer.end();
     sample_iterator = 0;
   }else{
@@ -109,23 +181,65 @@ void sample(){
   
 }
 
+void draw_math_functions(){
+  if(!enable_math){
+    return;
+  }
+}
+
 void draw_channel_data(){
-  for (int i = 0; i < NUM_SAMPLES; i++) {
-    for(int j = 0; j < 239; j++){
-      if(ch1_pxl[i] == j){
-        im(i, j) = tgx::RGB565_Blue; 
-      }else if(ch2_pxl[i] == j){
-        im(i, j) = tgx::RGB565_Yellow;
+  
+  if(!enable_math && adjust_trigger){
+    update_trigger();
+  }
+  int trigger_pixel = map(trigger_level, 0, 1023, 239, 0);
+  if(!enable_math && !adjust_trigger){
+    update_voltage_scaling();
+  }
+  if(!enable_math){
+    update_time_scaling();
+  }
+
+  /*for (int i = 0; i < (320 * time_scale); i += time_scale) {
+    for(int j = 0; j < 240; j++){
+      int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
+      int ch2_scaled = constrain((ch2_pxl[i] - 120) * vertical_scale + 120, 0, 239);
+
+      if(ch1_scaled == j){
+        im((i / time_scale), ch1_scaled) = tgx::RGB565_Blue;
+      }else if(ch2_scaled == j){
+        im((i / time_scale), ch2_scaled) = tgx::RGB565_Yellow;
       }else{
-        im(i, j) = tgx::RGB565_Black;  
+        im((i / time_scale), j) = tgx::RGB565_Black;  
       }
     }
+  }*/
+
+  im.clear(tgx::RGB565_Black);
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
+    int ch2_scaled = constrain((ch2_pxl[i] - 120) * vertical_scale + 120, 0, 239);
+    
+    int x = i * time_scale;
+    if (x >= SLX) break; // Stop drawing if x exceeds screen width
+    im(x, ch1_scaled) = tgx::RGB565_Blue; 
+    im(x, ch2_scaled) = tgx::RGB565_Yellow;
+  }
+
+  if (show_trigger) {
+    for (int x = 0; x < SLX; x++) {
+      im(x, trigger_pixel) = tgx::RGB565_Red;
+    }
+    Serial.printf("\nTrigger Level: %d %s", trigger_level, show_trigger ? "[VISIBLE]" : "[HIDDEN]");
   }
 }
 
 void setup(void) {
   Serial.begin(115200);
   sample_iterator = 0;
+
+  encoderA.write(0);
+  encoderB.write(0);
 
   pinMode(ROT_1A, INPUT_PULLUP);
   pinMode(ROT_1B, INPUT_PULLUP);
@@ -139,7 +253,7 @@ void setup(void) {
 
   pauseButton.attach(PAUSE_PIN, INPUT_PULLUP);
   pauseButton.interval(5); // 5 ms debounce interval
-  mathButton.attach(PAUSE_PIN, INPUT_PULLUP);
+  mathButton.attach(MATH_PIN, INPUT_PULLUP);
   mathButton.interval(5); // 5 ms debounce interval
   encoderAButton.attach(ROT_1C, INPUT_PULLUP);
   encoderAButton.interval(5); // 5 ms debounce interval
@@ -178,13 +292,39 @@ void setup(void) {
 void loop(void) {
 
   pauseButton.update();
-  if (pauseButton.fell()) {
+  mathButton.update();
+  encoderAButton.update();
+  encoderBButton.update();
+  
+  if(encoderBButton.fell()){
+    adjust_trigger = !adjust_trigger;
+    if(adjust_trigger){
+      encoderB.write(preserved_trigger_encoder * 4);
+    }else{
+      encoderB.write(preserved_voltage_encoder * 4);
+    }
+    Serial.printf("\nTRIGGER Status: %d", adjust_trigger);
+  }
+  if(pauseButton.fell()) {
     paused = !paused; // Toggle pause state
     sampling_timer.end();
-    Serial.println("PAUSED");
+    Serial.printf("\nPAUSE Status: %d", paused);
   }
+  if(mathButton.fell()){
+    enable_math = !enable_math;
+    if(adjust_trigger){
+      encoderB.write(preserved_trigger_encoder * 4);
+    }else{
+      encoderB.write(preserved_voltage_encoder * 4);
+    }
+    encoderA.write(preserved_time_encoder * 4);
+    Serial.printf("\nMATH Status: %d", enable_math);
+  }
+
+
   if(!paused){
     draw_channel_data();
+    draw_math_functions();
     tft.update(fb);
     sampling_timer.begin(sample, SAMPLING_INTERVAL);
   }
