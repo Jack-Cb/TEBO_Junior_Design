@@ -37,6 +37,7 @@ using namespace tgx;
 // the screen driver object
 ILI9341_T4::ILI9341Driver tft(PIN_CS, PIN_DC, PIN_SCK, PIN_MOSI, PIN_MISO, PIN_RESET, PIN_TOUCH_CS, PIN_TOUCH_IRQ);
 
+
 // 2 x 10K diff buffers (used by tft) for differential updates (in DMAMEM)
 DMAMEM ILI9341_T4::DiffBuffStatic<6000> diff1;
 DMAMEM ILI9341_T4::DiffBuffStatic<6000> diff2;
@@ -57,6 +58,10 @@ Image<RGB565> im(fb, SLX, SLY);
 ADC *adc = new ADC();
 bool paused = false;
 bool enable_math = false;
+bool ENABLE_CUBE = true;
+
+bool enable_channel1 = false;
+bool enable_channel2 = false;
 
 bool draw_YCH1 = false;
 bool draw_YCH2 = false;
@@ -118,6 +123,16 @@ volatile int trigger_level = 512;
 volatile bool show_trigger = false;
 unsigned long last_encoder_activity = 0;
 long preserved_trigger_encoder = 0;
+
+//CUBE STUFF ---------------------------------------------
+const float ratio = ((float)SLX) / SLY; // aspect ratio
+uint16_t zbuf[SLX * SLY];  
+const int tex_size = 128;
+RGB565 texture_data[tex_size*tex_size];
+Image<RGB565> texture(texture_data, tex_size, tex_size);
+const Shader LOADED_SHADERS = SHADER_ORTHO | SHADER_PERSPECTIVE | SHADER_ZBUFFER | SHADER_FLAT | SHADER_TEXTURE_BILINEAR | SHADER_TEXTURE_WRAP_POW2;
+Renderer3D<RGB565, LOADED_SHADERS, uint16_t> renderer;
+
 
 void update_trigger() {
   long new_position = encoderB.read() / 4;  // Adjust sensitivity
@@ -222,8 +237,13 @@ void draw_channel_data(){
     
     int x = i * time_scale;
     if (x >= SLX) break; // Stop drawing if x exceeds screen width
-    im(x, ch1_scaled) = tgx::RGB565_Blue; 
-    im(x, ch2_scaled) = tgx::RGB565_Yellow;
+    if(enable_channel1){
+      im(x, ch1_scaled) = tgx::RGB565_Blue;
+    }
+    if(enable_channel2){
+      im(x, ch2_scaled) = tgx::RGB565_Yellow;
+    }
+  
   }
 
   if (show_trigger) {
@@ -283,12 +303,46 @@ void setup(void) {
   tft.setDiffGap(4); // small gap
   tft.setRefreshRate(140); // refresh at 60hz
   tft.setVSyncSpacing(2);
-  im.clear(tgx::RGB565_Black);
+
+
+
+  // CUBE STUFF-----------
+  renderer.setViewportSize(SLX,SLY);
+  renderer.setOffset(0, 0);
+  renderer.setImage(&im);
+  renderer.setZbuffer(zbuf);
+  renderer.setCulling(1);
+  renderer.setTextureQuality(SHADER_TEXTURE_BILINEAR);
+  renderer.setTextureWrappingMode(SHADER_TEXTURE_WRAP_POW2);
+  renderer.setShaders(SHADER_FLAT | SHADER_TEXTURE );
+  renderer.setPerspective(45, ratio, 1.0f, 100.0f);
+  texture.fillScreen(RGB565_Blue);
+
 
   adc->startSynchronizedSingleRead(CHANNEL_A, CHANNEL_B); // start ADC, read A0 and A1 channels
   sampling_timer.begin(sample, SAMPLING_INTERVAL);
   Serial.println("SETUP DONE");
 }
+
+
+// CUBE FUNCTION --------------
+elapsedMillis em = 0; // time
+int nbf = 0; ; // number frames drawn
+int projtype = 0; // current projection used. 
+void splash()
+    {
+    static int count = 0;    
+    static RGB565 color;
+    if (count == 0)
+        color = RGB565((int)random(32), (int)random(64), (int)random(32)); 
+    count = (count + 1) % 400;
+    iVec2 pos(random(tex_size), random(tex_size));
+    int r = random(10);
+    texture.drawRect(iBox2( pos.x - r, pos.x + r, pos.y - r, pos.y + r ), color);
+    }
+
+
+
 void loop(void) {
 
   pauseButton.update();
@@ -305,11 +359,31 @@ void loop(void) {
     }
     Serial.printf("\nTRIGGER Status: %d", adjust_trigger);
   }
+
+
+  if(encoderAButton.fell()){
+    if(!enable_channel1 && !enable_channel2 && ENABLE_CUBE){
+      ENABLE_CUBE = false;
+    }else if(!enable_channel1 && !enable_channel2 && !ENABLE_CUBE){
+      enable_channel1 = true;
+    }else if(enable_channel1 && !enable_channel2){
+      enable_channel2 = true;
+    }else if(enable_channel1 && enable_channel2){
+      enable_channel1 = false;
+    }else if(!enable_channel1 && enable_channel2){
+      enable_channel2 = false;
+      ENABLE_CUBE = true;
+    }
+  }
+
+
   if(pauseButton.fell()) {
     paused = !paused; // Toggle pause state
     sampling_timer.end();
     Serial.printf("\nPAUSE Status: %d", paused);
   }
+
+
   if(mathButton.fell()){
     enable_math = !enable_math;
     if(adjust_trigger){
@@ -321,8 +395,51 @@ void loop(void) {
     Serial.printf("\nMATH Status: %d", enable_math);
   }
 
+  if(ENABLE_CUBE){
+    // model matrix
+    fMat4 M;
+    M.setRotate(em / 11.0f, { 0,1,0 });
+    M.multRotate(em / 23.0f, { 1,0,0 });
+    M.multRotate(em / 41.0f, { 0,0,1 });
+    M.multTranslate({ 0, 0, -5 });
 
-  if(!paused){
+    im.fillScreen((projtype) ? RGB565_Black : RGB565_Gray); // erase the screen, black in perspective and grey in orthographic projection
+    renderer.clearZbuffer(); // clear the z buffer        
+    renderer.setModelMatrix(M);// position the model
+
+    renderer.drawCube(&texture, & texture, & texture, & texture, & texture, & texture); // draw the textured cube
+
+
+    // info about the projection type
+    im.drawText((projtype) ? "Perspective projection" : "Orthographic projection", {3,12 }, font_tgx_OpenSans_Bold_10, RGB565_Red);
+
+    // add fps counter
+    tft.overlayFPS(fb); 
+    
+    // update the screen (async). 
+    tft.update(fb);
+
+    // add a random rect on the texture.
+    splash();
+
+    // switch between perspective and orthogonal projection every 1000 frames.
+    if (nbf++ % 1000 == 0){
+        projtype = 1 - projtype;
+
+        if (projtype)
+            renderer.setPerspective(45, ratio, 1.0f, 100.0f);
+        else
+            renderer.setOrtho(-1.8 * ratio, 1.8 * ratio, -1.8, 1.8, 1.0f, 100.0f);
+
+        tft.printStats();
+        diff1.printStats();
+        diff2.printStats();
+        }
+
+  }
+
+
+  if(!paused && !ENABLE_CUBE){
     draw_channel_data();
     draw_math_functions();
     tft.update(fb);
