@@ -152,7 +152,7 @@ void update_time_scaling() {
   if (new_position != preserved_time_encoder) {
     preserved_time_encoder = new_position;
     time_scale = constrain(time_scale + (new_position * 0.1), 0.2, 10.0); // Adjust the range as needed
-    Serial.printf("Time Scale: %.1f\n", time_scale);
+    Serial.printf("Time Scale: %.1fx\n", time_scale);
   }
 }
 
