@@ -166,7 +166,7 @@ void update_time_scaling() {
 
   if (new_position != preserved_time_encoder) {
     preserved_time_encoder = new_position;
-    time_scale = constrain(time_scale + (new_position * 0.1), 0.2, 10.0); // Adjust the range as needed
+    time_scale = constrain(time_scale + (new_position * 0.1), 0.5, 10.0); // Adjust the range as needed
     Serial.printf("Time Scale: %.1fx\n", time_scale);
   }
 }
@@ -202,8 +202,34 @@ void draw_math_functions(){
   }
 }
 
+void display_time_scale() {
+    im.drawRect({ 0, 0, 320, 20}, tgx::RGB565_White);
+    tgx::iVec2 anchor_point;
+
+    char timeScaleText[20];
+    snprintf(timeScaleText, sizeof(timeScaleText), "Time: %.1fx", time_scale);
+    anchor_point = { 160, 0 };
+    im.drawTextEx(timeScaleText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
+
+    char verticalScaleText[30]; 
+    anchor_point = { 40, 0 };
+    snprintf(verticalScaleText, sizeof(verticalScaleText), "Vertical: %.1fx", vertical_scale);
+    im.drawTextEx(verticalScaleText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
+
+    char triggerValueText[30]; 
+    anchor_point = { 260, 0 };
+    snprintf(triggerValueText, sizeof(triggerValueText), "Trigger: %.1dx", trigger_level);
+    im.drawTextEx(triggerValueText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
+}
+
 void draw_channel_data(){
-  
+ 
+  im.clear(tgx::RGB565_Black);
+
+  if(!enable_math){
+    update_time_scaling();
+    display_time_scale();
+  }
   if(!enable_math && adjust_trigger){
     update_trigger();
   }
@@ -211,26 +237,7 @@ void draw_channel_data(){
   if(!enable_math && !adjust_trigger){
     update_voltage_scaling();
   }
-  if(!enable_math){
-    update_time_scaling();
-  }
 
-  /*for (int i = 0; i < (320 * time_scale); i += time_scale) {
-    for(int j = 0; j < 240; j++){
-      int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
-      int ch2_scaled = constrain((ch2_pxl[i] - 120) * vertical_scale + 120, 0, 239);
-
-      if(ch1_scaled == j){
-        im((i / time_scale), ch1_scaled) = tgx::RGB565_Blue;
-      }else if(ch2_scaled == j){
-        im((i / time_scale), ch2_scaled) = tgx::RGB565_Yellow;
-      }else{
-        im((i / time_scale), j) = tgx::RGB565_Black;  
-      }
-    }
-  }*/
-
-  im.clear(tgx::RGB565_Black);
   for (int i = 0; i < NUM_SAMPLES; i++) {
     int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
     int ch2_scaled = constrain((ch2_pxl[i] - 120) * vertical_scale + 120, 0, 239);
@@ -361,7 +368,7 @@ void loop(void) {
   }
 
 
-  if(encoderAButton.fell()){
+  if(encoderAButton.fell() && !enable_math){
     if(!enable_channel1 && !enable_channel2 && ENABLE_CUBE){
       ENABLE_CUBE = false;
     }else if(!enable_channel1 && !enable_channel2 && !ENABLE_CUBE){
@@ -411,10 +418,10 @@ void loop(void) {
 
 
     // info about the projection type
-    im.drawText((projtype) ? "Perspective projection" : "Orthographic projection", {3,12 }, font_tgx_OpenSans_Bold_10, RGB565_Red);
+    im.drawText((projtype) ? "TEBO Program" : "Praise The Cube!", {3,12 }, font_tgx_OpenSans_Bold_10, RGB565_Red);
 
     // add fps counter
-    tft.overlayFPS(fb); 
+    //tft.overlayFPS(fb); 
     
     // update the screen (async). 
     tft.update(fb);
