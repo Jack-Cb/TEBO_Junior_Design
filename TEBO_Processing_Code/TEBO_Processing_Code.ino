@@ -200,6 +200,7 @@ void draw_math_functions(){
   if(!enable_math){
     return;
   }
+
 }
 
 void display_time_scale() {
@@ -418,7 +419,7 @@ void loop(void) {
 
 
     // info about the projection type
-    im.drawText((projtype) ? "TEBO Program" : "Praise The Cube!", {3,12 }, font_tgx_OpenSans_Bold_10, RGB565_Red);
+    im.drawText((projtype) ? "TEBO Program by Jack Cunningham, Jeremy Geno, Nick Alves" : "Praise The Cube!", {3,12 }, font_tgx_OpenSans_Bold_10, RGB565_Red);
 
     // add fps counter
     //tft.overlayFPS(fb); 
