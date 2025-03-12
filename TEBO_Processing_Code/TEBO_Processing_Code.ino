@@ -82,7 +82,7 @@ int ch2_pxl[NUM_SAMPLES];
 #define CHANNEL_A   14
 #define CHANNEL_B   19
 #define ADC_RESOLUTION    10      // Resolution in bits
-#define ADC_OVERSAMPLING  16      // 
+#define ADC_OVERSAMPLING  0      // 
 #define SAMPLING_INTERVAL 1      // microseconds
 volatile float time_scale = 1.0;
 long preserved_time_encoder = 0;
@@ -107,7 +107,6 @@ Bounce encoderBButton = Bounce();
 #define TRIGGER_MAX 1023
 #define TRIGGER_STEP 10  // Step size per encoder tick
 #define TRIGGER_TIMEOUT 1000 
-#define TRIGGER_CHANNEL channel1_raw
 
 Encoder encoderA(ROT_1A, ROT_1B);
 Encoder encoderB(ROT_2A, ROT_2B);
@@ -181,7 +180,7 @@ void sample(){
   // TRIGGER TEST
   if (!triggered) {
     // Check if the trigger condition is met
-    if (ch1_value > trigger_level && channel1_raw[(sample_iterator - 1 + NUM_SAMPLES) % NUM_SAMPLES] <= trigger_level) {
+    if ((ch1_value > trigger_level && channel1_raw[(sample_iterator - 1 + NUM_SAMPLES) % NUM_SAMPLES] <= trigger_level) || (ch2_value > trigger_level && channel2_raw[(sample_iterator - 1 + NUM_SAMPLES) % NUM_SAMPLES] <= trigger_level)){
       triggered = true;
       sample_iterator = 0; // Reset the sample iterator when trigger is fired
     }
@@ -196,11 +195,13 @@ void sample(){
   adc->startSynchronizedSingleRead(CHANNEL_A, CHANNEL_B);
 
   if(sample_iterator == (NUM_SAMPLES - 1)){
-    sampling_timer.end();
+    //sampling_timer.end();
     sample_iterator = 0;
     triggered = false;  // TRIGGER TEST
+    return;
   }else{
     sample_iterator++;
+    sample();
   }
   
 }
@@ -268,11 +269,35 @@ void draw_channel_data(){
       int x = i * time_scale;
       if (x >= SLX) break; // Stop drawing if x exceeds screen width
       if(enable_channel1){
-       im(x, ch1_scaled) = tgx::RGB565_Blue;
+        im(x, ch1_scaled) = tgx::RGB565_Blue;
       }
       if(enable_channel2){
         im(x, ch2_scaled) = tgx::RGB565_Yellow;
       }
+
+      // INTERPOLATION (BUGGY IN CURRENT FORM)
+      /*if (time_scale > 2.0) {
+        int next_index = (index + 1) % NUM_SAMPLES;
+        int next_x = (i + 1) * time_scale;
+        if (next_x < SLX) {
+          for (int j = x; j < next_x; j++) {
+            int interp_ch1prescale = ch1_pxl[index] + (ch1_pxl[next_index] - ch1_pxl[index]) * (j - x) / (next_x - x);
+            int interp_ch2prescale = ch2_pxl[index] + (ch2_pxl[next_index] - ch2_pxl[index]) * (j - x) / (next_x - x);
+            
+            int interp_ch1 = constrain((interp_ch1prescale - 120) * vertical_scale + 120, 0, 239);
+            int interp_ch2 = constrain((interp_ch2prescale - 120) * vertical_scale + 120, 0, 239);
+
+            if(enable_channel1){
+              im(j, interp_ch1) = tgx::RGB565_Blue;
+            }
+            if(enable_channel2){
+              im(j, interp_ch2) = tgx::RGB565_Yellow;
+            }
+          }
+        }
+      }*/
+
+
     }
   }else{
     for (int i = 0; i < NUM_SAMPLES; i++) {
@@ -282,7 +307,7 @@ void draw_channel_data(){
       int x = i * time_scale;
       if (x >= SLX) break; // Stop drawing if x exceeds screen width
       if(enable_channel1){
-       im(x, ch1_scaled) = tgx::RGB565_Blue;
+        im(x, ch1_scaled) = tgx::RGB565_Blue;
       }
       if(enable_channel2){
         im(x, ch2_scaled) = tgx::RGB565_Yellow;
@@ -325,11 +350,11 @@ void setup(void) {
   encoderBButton.interval(5); // 5 ms debounce interval
 
   adc->adc0->setResolution(ADC_RESOLUTION);
-  adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED);
+  adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::VERY_HIGH_SPEED);
   adc->adc0->setSamplingSpeed(ADC_SAMPLING_SPEED::VERY_HIGH_SPEED);
   adc->adc0->setAveraging(ADC_OVERSAMPLING);
   adc->adc1->setResolution(ADC_RESOLUTION);
-  adc->adc1->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED);
+  adc->adc1->setConversionSpeed(ADC_CONVERSION_SPEED::VERY_HIGH_SPEED);
   adc->adc1->setSamplingSpeed(ADC_SAMPLING_SPEED::VERY_HIGH_SPEED);
   adc->adc1->setAveraging(ADC_OVERSAMPLING);
 
@@ -364,7 +389,7 @@ void setup(void) {
 
 
   adc->startSynchronizedSingleRead(CHANNEL_A, CHANNEL_B); // start ADC, read A0 and A1 channels
-  sampling_timer.begin(sample, SAMPLING_INTERVAL);
+  //sampling_timer.begin(sample, SAMPLING_INTERVAL);
   Serial.println("SETUP DONE");
 }
 
@@ -423,7 +448,7 @@ void loop(void) {
 
   if(pauseButton.fell()) {
     paused = !paused; // Toggle pause state
-    sampling_timer.end();
+    //sampling_timer.end();
     Serial.printf("\nPAUSE Status: %d", paused);
   }
 
@@ -484,10 +509,11 @@ void loop(void) {
 
 
   if(!paused && !ENABLE_CUBE){
+    sample();
     draw_channel_data();
     draw_math_functions();
     tft.update(fb);
-    sampling_timer.begin(sample, SAMPLING_INTERVAL);
+    //sampling_timer.begin(sample, SAMPLING_INTERVAL);
   }
 }
 
