@@ -160,7 +160,6 @@ void update_voltage_scaling() {
   }
 }
 
-// NOT SURE IF THIS IS CORRECT AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 void update_time_scaling() {
   long new_position = encoderA.read() / 4;  // Adjust sensitivity
 
@@ -179,6 +178,15 @@ void sample(){
   int ch1_value = 1023 - adc->adc0->readSingle();
   int ch2_value = 1023 - adc->adc1->readSingle();
 
+  // TRIGGER TEST
+  if (!triggered) {
+    // Check if the trigger condition is met
+    if (ch1_value > trigger_level && channel1_raw[(sample_iterator - 1 + NUM_SAMPLES) % NUM_SAMPLES] <= trigger_level) {
+      triggered = true;
+      sample_iterator = 0; // Reset the sample iterator when trigger is fired
+    }
+  }
+
   channel1_raw[sample_iterator] = ch1_value;
   channel2_raw[sample_iterator] = ch2_value;
 
@@ -190,6 +198,7 @@ void sample(){
   if(sample_iterator == (NUM_SAMPLES - 1)){
     sampling_timer.end();
     sample_iterator = 0;
+    triggered = false;  // TRIGGER TEST
   }else{
     sample_iterator++;
   }
@@ -239,19 +248,46 @@ void draw_channel_data(){
     update_voltage_scaling();
   }
 
-  for (int i = 0; i < NUM_SAMPLES; i++) {
-    int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
-    int ch2_scaled = constrain((ch2_pxl[i] - 120) * vertical_scale + 120, 0, 239);
-    
-    int x = i * time_scale;
-    if (x >= SLX) break; // Stop drawing if x exceeds screen width
-    if(enable_channel1){
-      im(x, ch1_scaled) = tgx::RGB565_Blue;
+
+  int trigger_index = -1;
+
+  // Find the index where the trigger condition is met
+  for (int i = 1; i < NUM_SAMPLES; i++) {
+    if ((channel1_raw[i] > trigger_level && channel1_raw[i - 1] <= trigger_level) || (channel2_raw[i] > trigger_level && channel2_raw[i - 1] <= trigger_level)) {
+      trigger_index = i;
+      break;
     }
-    if(enable_channel2){
-      im(x, ch2_scaled) = tgx::RGB565_Yellow;
+  }
+
+  if (trigger_index != -1) {
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+      
+      int index = (trigger_index + i) % NUM_SAMPLES;
+      int ch1_scaled = constrain((ch1_pxl[index] - 120) * vertical_scale + 120, 0, 239);
+      int ch2_scaled = constrain((ch2_pxl[index] - 120) * vertical_scale + 120, 0, 239);
+      int x = i * time_scale;
+      if (x >= SLX) break; // Stop drawing if x exceeds screen width
+      if(enable_channel1){
+       im(x, ch1_scaled) = tgx::RGB565_Blue;
+      }
+      if(enable_channel2){
+        im(x, ch2_scaled) = tgx::RGB565_Yellow;
+      }
     }
-  
+  }else{
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+      
+      int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
+      int ch2_scaled = constrain((ch2_pxl[i] - 120) * vertical_scale + 120, 0, 239);
+      int x = i * time_scale;
+      if (x >= SLX) break; // Stop drawing if x exceeds screen width
+      if(enable_channel1){
+       im(x, ch1_scaled) = tgx::RGB565_Blue;
+      }
+      if(enable_channel2){
+        im(x, ch2_scaled) = tgx::RGB565_Yellow;
+      }
+    }
   }
 
   if (show_trigger) {
