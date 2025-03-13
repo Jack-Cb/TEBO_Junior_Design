@@ -368,7 +368,8 @@ void display_scales() {
 
     // draw the current seconds per division & voltage per division
 
-    float Vdiv = 0.2211 * (1.0/vertical_scale);
+    float vdiv_nominal = (10.0 / 12.0);
+    float Vdiv = vdiv_nominal * (1.0/vertical_scale) * 1.42;
 
     double Tdiv = (1.0/time_scale)*0.00002469; 
 
