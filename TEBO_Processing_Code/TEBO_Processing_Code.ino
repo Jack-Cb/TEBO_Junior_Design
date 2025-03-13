@@ -67,12 +67,17 @@ bool draw_YCH1 = false;
 bool draw_YCH2 = false;
 bool adjust_trigger = false;
 
-int cursor1_xpos = 160;
-int cursor1_ypos = 120;
-int cursor2_xpos = 160;
-int cursor2_ypos = 120;
+int cursor1_ypos = 512;
+int cursor1_xpos = 768;
+int cursor2_ypos = 513;
+int cursor2_xpos = 256;
 
-#define NUM_SAMPLES 640
+long preserved_x1pos = 0;
+long preserved_y1pos = 0;
+long preserved_x2pos = 0;
+long preserved_y2pos = 0;
+
+#define NUM_SAMPLES 3200
 int sample_iterator;
 int channel1_raw[NUM_SAMPLES];
 int channel2_raw[NUM_SAMPLES];
@@ -164,7 +169,7 @@ void update_time_scaling() {
 
   if (new_position != preserved_time_encoder) {
     preserved_time_encoder = new_position;
-    time_scale = constrain(time_scale + (new_position * 0.1), 0.5, 10.0); // Adjust the range as needed
+    time_scale = constrain(time_scale + (new_position * 0.1), 0.1, 10.0); // Adjust the range as needed
     Serial.printf("Time Scale: %.1fx\n", time_scale);
   }
 }
@@ -206,20 +211,140 @@ void sample(){
   
 }
 
+void updateY_cursorA() {
+  long new_position = encoderA.read() / 4;  // Adjust sensitivity
+
+  if (new_position != preserved_y1pos) {
+    preserved_y1pos = new_position;
+    cursor1_ypos = constrain(512 + (new_position * 10), 0, 1023);
+  }
+}
+void updateX_cursorA() {
+  long new_position = encoderA.read() / 4;  // Adjust sensitivity
+
+  if (new_position != preserved_x1pos) {
+    preserved_x1pos = new_position;
+    cursor1_xpos = constrain(512 + (new_position * 10), 0, 1023);
+  }
+}
+void updateY_cursorB() {
+  long new_position = encoderB.read() / 4;  // Adjust sensitivity
+
+  if (new_position != preserved_y2pos) {
+    preserved_y2pos = new_position;
+    cursor2_ypos = constrain(512 + (new_position * 10), 0, 1023);
+  }
+}
+void updateX_cursorB() {
+  long new_position = encoderB.read() / 4;  // Adjust sensitivity
+
+  if (new_position != preserved_x2pos) {
+    preserved_x2pos = new_position;
+    cursor2_xpos = constrain(512 + (new_position * 10), 0, 1023);
+  }
+}
+
 void draw_math_functions(){
   if(!enable_math){
     return;
   }
+  if(encoderAButton.fell()){
+    draw_YCH1 = !draw_YCH1;
+    if(draw_YCH1){
+      encoderA.write(preserved_y1pos * 4);
+    }else{
+      encoderA.write(preserved_x1pos * 4);
+    }
+  }
+  if(encoderBButton.fell()){
+    draw_YCH2 = !draw_YCH2;
+    if(draw_YCH2){
+      encoderB.write(preserved_y2pos * 4);
+    }else{
+      encoderB.write(preserved_x2pos * 4);
+    }
+  }
+
+  if(draw_YCH1){
+    updateY_cursorA();
+  }else{
+    updateX_cursorA();
+  }
+  if(draw_YCH2){
+    updateY_cursorB();
+  }else{
+    updateX_cursorB();
+  }
+  
+
+  int CH1_Y = map(cursor1_ypos, 0, 1023, 239, 0);
+  int CH1_X = map(cursor1_xpos, 0, 1023, 319, 0);
+  int CH2_Y = map(cursor2_ypos, 0, 1023, 239, 0);
+  int CH2_X = map(cursor2_xpos, 0, 1023, 319, 0);
+
+  for (int x = 0; x < SLX; x++) {
+    im(x, CH1_Y) = tgx::RGB565_Red;
+    im(x, CH2_Y) = tgx::RGB565_Blue;
+  }
+  for (int y = 0; y < SLY; y++){
+    im(CH1_X, y) = tgx::RGB565_Red;
+    im(CH2_X, y) = tgx::RGB565_Blue;
+  }
+
+  float voltage_diff_analog = abs(cursor1_ypos - cursor2_ypos);
+  float voltage_diff_premap = map(voltage_diff_analog, 0, 1023, 0, 3.3);
+  float voltage_diff_postmap = map(voltage_diff_premap, 0, 3.3, 0, 10.0);
+  float voltage_diff_postmap_scaled = abs(voltage_diff_postmap * (1.0 / vertical_scale));
+
+  tgx::iVec2 anchor_point;
+
+  char MathTextA[30]; 
+  anchor_point = { 280, 0 };
+  snprintf(MathTextA, sizeof(MathTextA), "dV: %.3f V", voltage_diff_postmap_scaled);
+  im.drawTextEx(MathTextA, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
+
+
+  float time_diff_analog = abs(cursor1_xpos - cursor2_xpos);
+  float time_diff_premap = map(time_diff_analog, 0, 1023, 0, 319);
+  long long time_diff_divs = map(time_diff_premap, 0, 319, 0, 16.0000000);
+
+  double Tdiv = (1.0/time_scale)*0.00002469; 
+  double time_diff_postmap_scaled = Tdiv * time_diff_divs;
+  float  freqDiv= 1.0/float(time_diff_postmap_scaled);
+
+    char prefix[3];
+
+        //micro
+          if  (freqDiv > 10000){
+          strcpy(prefix, "u");
+          time_diff_postmap_scaled = time_diff_postmap_scaled * 1000000;
+
+          // milli
+          }else if (10000 > freqDiv || freqDiv > 100){ 
+          strcpy(prefix, "m");
+          time_diff_postmap_scaled = time_diff_postmap_scaled * 1000.0;
+
+          //none
+          }else if (100 > freqDiv){
+          strcpy(prefix, "");
+    }
+
+    // display seconds per division
+  char MathTextB[20];  
+  anchor_point = { 280, 20 };
+  snprintf(MathTextB, sizeof(MathTextB), "dT: %.3f%ss", time_diff_postmap_scaled, prefix);
+  im.drawTextEx(MathTextB, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
+  
 
 }
 
-void display_time_scale() {
+void display_scales() {
     im.drawRect({ 0, 0, 320, 20}, tgx::RGB565_White);
     tgx::iVec2 anchor_point;
 
-    char timeScaleText[20];
+    char timeScaleText[20];  
     snprintf(timeScaleText, sizeof(timeScaleText), "Time: %.1fx", time_scale);
-    anchor_point = { 160, 0 };
+    anchor_point = { 40, 20 };
     im.drawTextEx(timeScaleText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
 
     char verticalScaleText[30]; 
@@ -228,9 +353,55 @@ void display_time_scale() {
     im.drawTextEx(verticalScaleText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
 
     char triggerValueText[30]; 
-    anchor_point = { 260, 0 };
+    anchor_point = { 40, 40 };
     snprintf(triggerValueText, sizeof(triggerValueText), "Trigger: %.1dx", trigger_level);
     im.drawTextEx(triggerValueText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
+
+    im.drawFastVLine({ 160, 0}, 240, tgx::RGB565_White, 20.0f);// draw a vertical line
+    im.drawFastHLine({ 0, 120}, 320, tgx::RGB565_White, 20.0f);// draw an horizontal line
+
+    for (int i = 0; i < 16; i++) {
+        im.drawFastVLine({ i * 20, 115}, 10, tgx::RGB565_White, 20.0f);// draw a vertical line
+        im.drawFastHLine({ 155, i * 20}, 10, tgx::RGB565_White, 20.0f);// draw a vertical line
+    }
+
+
+    // draw the current seconds per division & voltage per division
+
+    float Vdiv = 0.2211 * (1.0/vertical_scale);
+
+    double Tdiv = (1.0/time_scale)*0.00002469; 
+
+    float  freqDiv = 1.0/float(Tdiv);
+
+    char prefix[3];
+
+        //micro
+          if  (freqDiv > 10000){
+          strcpy(prefix, "u");
+          Tdiv = Tdiv * 1000000;
+
+          // milli
+          }else if (10000 > freqDiv || freqDiv > 100){ 
+          strcpy(prefix, "m");
+          Tdiv = Tdiv * 1000.0;
+
+          //none
+          }else if (100 > freqDiv){
+          strcpy(prefix, "");
+    }
+
+    // display seconds per division
+    char timeDivText[20];  
+    snprintf(timeDivText, sizeof(timeDivText), "Tdiv: %.2f%ss", Tdiv, prefix);
+    anchor_point = { 40, 230 };
+    im.drawTextEx(timeDivText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERBOTTOM, true, true, tgx::RGB565_White);
+    
+    // display volts per division
+    char verticalDivText[30]; 
+    anchor_point = { 110, 230 };
+    snprintf(verticalDivText, sizeof(verticalDivText), "Vdiv: %.2fV", Vdiv);
+    im.drawTextEx(verticalDivText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERBOTTOM, true, true, tgx::RGB565_White);
 }
 
 void draw_channel_data(){
@@ -239,7 +410,7 @@ void draw_channel_data(){
 
   if(!enable_math){
     update_time_scaling();
-    display_time_scale();
+    display_scales();
   }
   if(!enable_math && adjust_trigger){
     update_trigger();
@@ -314,7 +485,7 @@ void draw_channel_data(){
       }
     }
   }
-
+  
   if (show_trigger) {
     for (int x = 0; x < SLX; x++) {
       im(x, trigger_pixel) = tgx::RGB565_Red;
@@ -455,13 +626,25 @@ void loop(void) {
 
   if(mathButton.fell()){
     enable_math = !enable_math;
-    if(adjust_trigger){
-      encoderB.write(preserved_trigger_encoder * 4);
+    if(enable_math){
+      if(draw_YCH1){
+        encoderA.write(preserved_y1pos * 4);
+      }else{
+        encoderA.write(preserved_x1pos * 4);
+      }
+      if(draw_YCH2){
+        encoderB.write(preserved_y2pos * 4);
+      }else{
+        encoderB.write(preserved_x2pos * 4);
+      }
     }else{
-      encoderB.write(preserved_voltage_encoder * 4);
+      if(adjust_trigger){
+        encoderB.write(preserved_trigger_encoder * 4);
+      }else{
+        encoderB.write(preserved_voltage_encoder * 4);
+      }
+      encoderA.write(preserved_time_encoder * 4);
     }
-    encoderA.write(preserved_time_encoder * 4);
-    Serial.printf("\nMATH Status: %d", enable_math);
   }
 
   if(ENABLE_CUBE){
