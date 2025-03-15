@@ -24,7 +24,7 @@ using namespace tgx;
 #define PIN_SCK     13      // mandatory
 #define PIN_MISO    12      // mandatory
 #define PIN_MOSI    11      // mandatory
-#define PIN_DC      23     
+#define PIN_DC      23      // mandatory
 
 #define PIN_CS      255      // optional (but recommended), can be any pin.  
 #define PIN_RESET   25       // optional (but recommended), can be any pin. 
@@ -36,7 +36,6 @@ using namespace tgx;
 
 // the screen driver object
 ILI9341_T4::ILI9341Driver tft(PIN_CS, PIN_DC, PIN_SCK, PIN_MOSI, PIN_MISO, PIN_RESET, PIN_TOUCH_CS, PIN_TOUCH_IRQ);
-
 
 // 2 x 10K diff buffers (used by tft) for differential updates (in DMAMEM)
 DMAMEM ILI9341_T4::DiffBuffStatic<6000> diff1;
@@ -55,7 +54,10 @@ DMAMEM uint16_t internal_fb[SLX * SLY];
 // image that encapsulates fb.
 Image<RGB565> im(fb, SLX, SLY);
 
+// Declare ADC object for operation
 ADC *adc = new ADC();
+
+// Vars to determine states of operation
 bool paused = false;
 bool enable_math = false;
 bool ENABLE_CUBE = true;
@@ -67,16 +69,19 @@ bool draw_YCH1 = false;
 bool draw_YCH2 = false;
 bool adjust_trigger = false;
 
+// Default positions for cursors
 int cursor1_ypos = 512;
 int cursor1_xpos = 768;
 int cursor2_ypos = 513;
 int cursor2_xpos = 256;
 
+// Encoder position vars
 long preserved_x1pos = 0;
 long preserved_y1pos = 0;
 long preserved_x2pos = 0;
 long preserved_y2pos = 0;
 
+// ADC Running conditions and buffers for the two channels
 #define NUM_SAMPLES 3200
 int sample_iterator;
 int channel1_raw[NUM_SAMPLES];
@@ -89,11 +94,12 @@ int ch2_pxl[NUM_SAMPLES];
 #define ADC_RESOLUTION    10      // Resolution in bits
 #define ADC_OVERSAMPLING  0      // 
 #define SAMPLING_INTERVAL 1      // microseconds
+IntervalTimer sampling_timer;
+
 volatile float time_scale = 1.0;
 long preserved_time_encoder = 0;
 
-IntervalTimer sampling_timer;
-
+// Encoder pin definitions
 #define ROT_1A 2  // LEFT Encode Clockwise
 #define ROT_1B 3  // LEFT Encode Counter-Clockwise
 #define ROT_1C 4  // LEFT Encode Button
@@ -103,11 +109,13 @@ IntervalTimer sampling_timer;
 #define PAUSE_PIN 9 // Bottom Button
 #define MATH_PIN 22 // Top Button
 
+// Bounce objects for encoders and push buttons
 Bounce pauseButton = Bounce();
 Bounce mathButton = Bounce();
 Bounce encoderAButton = Bounce();
 Bounce encoderBButton = Bounce();
 
+// Trigger conditions
 #define TRIGGER_MIN 0
 #define TRIGGER_MAX 1023
 #define TRIGGER_STEP 10  // Step size per encoder tick
@@ -116,19 +124,21 @@ Bounce encoderBButton = Bounce();
 Encoder encoderA(ROT_1A, ROT_1B);
 Encoder encoderB(ROT_2A, ROT_2B);
 
+// Voltage/vertical scale conditions and encoder values
 #define SCALE_MIN 0.1
 #define SCALE_MAX 5.0
 #define SCALE_STEP 0.1
 volatile float vertical_scale = 1.0;
 long preserved_voltage_encoder = 0;
 
+// Additional trigger conditions
 bool triggered = false;
 volatile int trigger_level = 512;
 volatile bool show_trigger = false;
 unsigned long last_encoder_activity = 0;
 long preserved_trigger_encoder = 0;
 
-//CUBE STUFF ---------------------------------------------
+// Statements needed for cube/loading screen functionality
 const float ratio = ((float)SLX) / SLY; // aspect ratio
 uint16_t zbuf[SLX * SLY];  
 const int tex_size = 128;
@@ -244,6 +254,7 @@ void updateX_cursorB() {
   }
 }
 
+// Handles cursor positions and displayed differences in voltage/time
 void draw_math_functions(){
   if(!enable_math){
     return;
@@ -303,7 +314,6 @@ void draw_math_functions(){
   snprintf(MathTextA, sizeof(MathTextA), "dV: %.3f V", voltage_diff_postmap_scaled);
   im.drawTextEx(MathTextA, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
 
-
   float time_diff_analog = abs(cursor1_xpos - cursor2_xpos);
   float time_diff_premap = map(time_diff_analog, 0, 1023, 0, 319);
   long long time_diff_divs = map(time_diff_premap, 0, 319, 0, 16.0000000);
@@ -335,9 +345,9 @@ void draw_math_functions(){
   snprintf(MathTextB, sizeof(MathTextB), "dT: %.3f%ss", time_diff_postmap_scaled, prefix);
   im.drawTextEx(MathTextB, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERTOP, true, true, tgx::RGB565_White);
   
-
 }
 
+// Draws grid and alters time+volts per div according to scale values
 void display_scales() {
     im.drawRect({ 0, 0, 320, 20}, tgx::RGB565_White);
     tgx::iVec2 anchor_point;
@@ -405,6 +415,7 @@ void display_scales() {
     im.drawTextEx(verticalDivText, anchor_point, font_tgx_OpenSans_12, tgx::Anchor::CENTERBOTTOM, true, true, tgx::RGB565_White);
 }
 
+// Main drawing function to parse samples onto the display, taking trigger and volt/time scale into account. 
 void draw_channel_data(){
  
   im.clear(tgx::RGB565_Black);
@@ -431,7 +442,8 @@ void draw_channel_data(){
       break;
     }
   }
-
+  
+  // Draw only values in the trigger if set
   if (trigger_index != -1) {
     for (int i = 0; i < NUM_SAMPLES; i++) {
       
@@ -447,7 +459,7 @@ void draw_channel_data(){
         im(x, ch2_scaled) = tgx::RGB565_Yellow;
       }
 
-      // INTERPOLATION (BUGGY IN CURRENT FORM)
+      // Interpolation for high time scales(Unused in current form)
       /*if (time_scale > 2.0) {
         int next_index = (index + 1) % NUM_SAMPLES;
         int next_x = (i + 1) * time_scale;
@@ -471,7 +483,7 @@ void draw_channel_data(){
 
 
     }
-  }else{
+  }else{ // Free/no trigger mode
     for (int i = 0; i < NUM_SAMPLES; i++) {
       
       int ch1_scaled = constrain((ch1_pxl[i] - 120) * vertical_scale + 120, 0, 239);
@@ -545,9 +557,7 @@ void setup(void) {
   tft.setRefreshRate(140); // refresh at 60hz
   tft.setVSyncSpacing(2);
 
-
-
-  // CUBE STUFF-----------
+  // Cube/loading screen setup
   renderer.setViewportSize(SLX,SLY);
   renderer.setOffset(0, 0);
   renderer.setImage(&im);
@@ -566,7 +576,7 @@ void setup(void) {
 }
 
 
-// CUBE FUNCTION --------------
+// Cube 2D draw function
 elapsedMillis em = 0; // time
 int nbf = 0; ; // number frames drawn
 int projtype = 0; // current projection used. 
